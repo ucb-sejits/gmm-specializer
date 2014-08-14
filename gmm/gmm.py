@@ -233,6 +233,12 @@ def main():
     X = Y.astype(np.float32)
 
 
+    gmm = GMM(M, D, cvtype='diag')
+    means, covars = gmm.train_using_python(X)
+    Y = gmm.predict_using_python(X)
+    assertTrue(len(set(Y)) > 1)
+
+
 
 
     gmm0 = GMM(M, D, cvtype='diag')
