@@ -147,12 +147,17 @@ void seed_covars(components_t* components,float* data_by_event,float* means,int 
     for(int i = 0; i < num_dimensions*num_dimensions; i++) {
       int row = (i) / num_dimensions;
       int col = (i) % num_dimensions;
+
+
       components->R[row*num_dimensions+col] = 0.0f;
+
       for(int j=0; j < num_events; j++) {
         if(row==col) {
           components->R[row*num_dimensions+col] +=(data_by_event[j*num_dimensions + row])*(data_by_event[j*num_dimensions + row]);
         }
       }
+
+      
       if(row==col) {
         components->R[row*num_dimensions+col] /=(float) (num_events -1);
         components->R[row*num_dimensions+col] -=((float)(num_events)*means[row]*means[row]) / (float)(num_events-1);
@@ -180,15 +185,17 @@ void average_variance(float* data_by_event,float* means,int num_dimensions, int 
 
 void seed_components(float *data_by_event,components_t* components,int num_dimensions,int num_components,int num_events) {
 
+
+
     float* means = (float*)malloc(sizeof(float) * num_dimensions);
     float avgvar;
 
+
+    
     // Compute means
     mvtmeans(data_by_event, num_dimensions, num_events, means);
-
     // Compute the average variance
     seed_covars(components,data_by_event,means,num_dimensions,num_events,&avgvar,num_components);
-
     average_variance(data_by_event,means,num_dimensions,num_events,&avgvar);
     float seed;
     if(num_components > 1) {
@@ -199,15 +206,17 @@ void seed_components(float *data_by_event,components_t* components,int num_dimen
 
     memcpy(components->means, means, sizeof(float) * num_dimensions);
 
+
+
     for(int c = 1; c < num_components; c++) {
         memcpy(&components->means[c*num_dimensions],&data_by_event[((int)(c * seed)) * num_dimensions],sizeof(float) * num_dimensions);
-          
         for(int i = 0; i < num_dimensions * num_dimensions; i++) {
           components->R[c * num_dimensions * num_dimensions+i] = components->R[i];
           components->Rinv[c * num_dimensions * num_dimensions+i] = 0.0f;
-        }
-    }
 
+        }
+        
+    }
     //compute pi, N
     for(int c =0; c<num_components; c++) {
         components->pi[c] = 1.0f / ((float)num_components);
@@ -216,6 +225,8 @@ void seed_components(float *data_by_event,components_t* components,int num_dimen
     }
 
     free(means);
+
+    printf("safely quit seed_components");
 }
 
 void compute_average_variance (float* data_by_event,components_t* components,int num_dimensions,int num_components,int num_events) {
@@ -236,7 +247,7 @@ void compute_average_variance (float* data_by_event,components_t* components,int
 void estep1 (float* data,components_t* components,float* component_memberships,int D, int M, int N,float* loglikelihoods, char* cvtype) {
     // Compute likelihood for every data point in each component
     float* temploglikelihoods = (float*)malloc(M * N * sizeof(float));
-    char diag[4];
+    char diag[5];
     strcpy(diag, "diag");
     for(int m = 0; m < M; m++) {
         float component_pi = components->pi[m];
@@ -326,17 +337,17 @@ void mstep_mean (float* data,components_t* components,float* component_membershi
 
 void mstep_n  (float* data,components_t* components,float* component_memberships,int D, int M, int N) {
     for(int m = 0; m < M; m++) {
-        components->N[m] = 0.0;
-        for(int n = 0; n < N; n++) {
-            components->N[m] += component_memberships[m*N+n];
-        }
-        components->pi[m] = components->N[m];
+      components->N[m] = 0.0;
+      for(int n = 0; n < N; n++) {
+        components->N[m] += component_memberships[m*N+n];
+      }
+      components->pi[m] = components->N[m];
     }
 }
 
 
 void mstep_covar(float* data,components_t* components,float* component_memberships,int D, int M, int N, char* cvtype) {
-    char diag[4];
+    char diag[5];
     strcpy(diag, "diag");
     for(int m = 0; m < M; m++) {
         float* means = &(components->means[m*D]);
@@ -373,63 +384,88 @@ void mstep_covar(float* data,components_t* components,float* component_membershi
 }
 
 void em_train(float *input_data, float *component_memberships, float *loglikelihoods,int num_components, int num_dimensions,int num_events,int min_iters,int max_iters, char* cvtype, float *ret_likelihood) {
-    
+    float* N =  (float*)malloc(sizeof(float) * num_components);  // expected # of pixels in component: [M]
+    float* pi = (float*)malloc(sizeof(float) * num_components);       // probability of component in GMM: [M]
+    float* CP = (float*)malloc(sizeof(float) * num_components); //cluster probability [M]
+    float* constant = (float*)malloc(sizeof(float) * num_components); // Normalizing constant [M]
+    float* avgvar = (float*)malloc(sizeof(float) * num_components);    // average variance [M]
+    float* means = (float*)malloc(sizeof(float) * num_components * num_dimensions);   // Spectral mean for the component: [M*D]
+    float* R = (float*)malloc(sizeof(float) * num_components * num_dimensions * num_dimensions);      // Covariance matrix: [M*D*D]
+    float* Rinv = (float*)malloc(sizeof(float) * num_components * num_dimensions * num_dimensions);   //
+
 
     float* data_by_dimension;
     components_t components;
 
-    data_by_dimension  = (float*)malloc(sizeof(float) *
-                              num_events * num_dimensions);
+    components.N = N;
+    components.pi = pi;
+    components.CP = CP;
+    components.constant = constant;
+    components.avgvar = avgvar;
+    components.means = means;
+    components.R = R;
+    components.Rinv = Rinv;
+    
+    data_by_dimension  = (float*)malloc(sizeof(float) * num_events * num_dimensions);
     
     for(int e = 0; e < num_events; e++) {
         for(int d = 0; d < num_dimensions; d++) {
             data_by_dimension[d * num_events + e] = input_data[e * num_dimensions + d];
         }
     }
+
     seed_components(input_data,&components,num_dimensions,num_components,num_events);
 
     // Computes the R matrix inverses, and the gaussian constant
     constants (&components,num_components,num_dimensions);
-
     // Compute average variance based on the data
     compute_average_variance(input_data,&components,num_dimensions,num_components,num_events);
-
     // Calculate an epsilon value
     //int ndata_points = num_events*num_dimensions;
     float epsilon = (1 + num_dimensions + 0.5 * (num_dimensions + 1) * num_dimensions) *log((float)num_events * num_dimensions) * 0.0001;
+
+    printf ("%f\n",epsilon);
     int iters;
     float likelihood = -100000;
     float old_likelihood = likelihood * 10;
     
     float change = epsilon*2;
-    
+  
     iters = 0;
+
     // This is the iterative loop for the EM algorithm.
     // It re-estimates parameters, re-computes constants, and then regroups the events
     // These steps keep repeating until the change in likelihood is less than some epsilon        
     // while(iters < min_iters || (fabs(change) > epsilon && iters < max_iters)) {
     while(iters < min_iters || (iters < max_iters && change > epsilon)) {
-
+        printf("loop");
+        printf("%d\n",iters);
         //printf("Training iteration: %u\n", iters);
         old_likelihood = likelihood;
 
         estep1(data_by_dimension,&components, component_memberships,num_dimensions,num_components,num_events,loglikelihoods,cvtype);
-
+        printf("estep1\n");
         estep2(data_by_dimension,&components,component_memberships,num_dimensions,num_components,num_events, &likelihood);
-
+        printf("estep2\n");
         //printf("Likelihood: %g\n", likelihood);
         
         // This kernel computes a new N, pi isn't updated until compute_constants though
         mstep_n(data_by_dimension,&components,component_memberships,num_dimensions,num_components,num_events);
+        printf("mstep_n\n");
         mstep_mean(data_by_dimension,&components,component_memberships, num_dimensions, num_components,num_events);
+        printf("mstep_mean\n");
         mstep_covar(data_by_dimension,&components,component_memberships,num_dimensions,num_components,num_events,cvtype);
+        printf("mstep_covar\n");
         
         // Inverts the R matrices, computes the constant, normalizes cluster probabilities
         constants(&components,num_components,num_dimensions);
+        printf("constants");
         change = likelihood - old_likelihood;
+        printf("%f\n",change);
         iters++;
     }
 
+    printf("%f\n", likelihood);
     estep1(data_by_dimension,&components,component_memberships,num_dimensions,num_components,num_events,loglikelihoods,cvtype);
     estep2(data_by_dimension,&components,component_memberships,num_dimensions,num_components,num_events,&likelihood);
       

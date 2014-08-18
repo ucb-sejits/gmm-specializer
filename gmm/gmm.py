@@ -10,6 +10,7 @@ from ctree.jit import LazySpecializedFunction
 from ctree.transformations import *
 from ctree.jit import ConcreteSpecializedFunction
 import unittest
+import logging
 
 
 class GMMComponents(object):
@@ -215,6 +216,7 @@ class CtrainFunction(ConcreteSpecializedFunction):
 
     def __call__(self, *args):
         input_data,component_memberships,loglikelihoods,num_components,num_dimensions,num_events,min_iters, max_iters,cvtype, ret_likelihood = args
+        print input_data
         input_data =input_data.ctypes.data_as(POINTER(c_float))
         component_memberships = component_memberships.ctypes.data_as(POINTER(c_float))
         loglikelihoods = loglikelihoods.ctypes.data_as(POINTER(c_float))
@@ -238,7 +240,7 @@ class Timer:
 class GmmTest(unittest.TestCase):
     def setUp(self):
         self.D = 2
-        self.N = 600
+        self.N = 10
         self.M = 3
         np.random.seed(0)
         C = np.array([[0., -0.7], [3.5, .7]])
@@ -253,6 +255,9 @@ class GmmTest(unittest.TestCase):
     def test_pure_python(self):
         gmm = GMM(self.M, self.D, cvtype='diag')
         means, covars = gmm.train_using_python(self.X)
+        print "pure result"
+        print means
+        print covars
         Y = gmm.predict_using_python(self.X)
         self.assertTrue(len(set(Y)) > 1)
 
@@ -260,8 +265,13 @@ class GmmTest(unittest.TestCase):
         print "test training once"
         gmm0 = GMM(self.M, self.D, cvtype='diag')
         likelihood0 = gmm0.train(self.X)
+        #print "get likihood0"
         means0  = gmm0.components.means.flatten()
         covars0 = gmm0.components.covars.flatten()
+
+        #print likelihood0
+        #print means0
+        #print covars0
 
         gmm1 = GMM(self.M, self.D, cvtype='diag')
         likelihood1 = gmm1.train(self.X)
