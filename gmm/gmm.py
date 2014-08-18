@@ -10,7 +10,7 @@ from ctree.jit import LazySpecializedFunction
 from ctree.transformations import *
 from ctree.jit import ConcreteSpecializedFunction
 import unittest
-import logging
+from numpy.ctypeslib import as_array
 
 
 class GMMComponents(object):
@@ -148,9 +148,7 @@ class GMM(object):
         if input_data.shape[1] != self.D:
             print "Error: Data has %d features, model expects %d features." % (input_data.shape[1], self.D)
 
-        self.eval_data.likelihood  = self.Ocltrain(input_data,self.eval_data.memberships,self.eval_data.loglikelihoods,self.M,self.D,N,min_em_iters,max_em_iters,self.cvtype,self.eval_data.likelihood)
-
-        self.eval_data.likelihood
+        self.eval_data.likelihood,self.components.means,self.components.covars = self.Ocltrain(input_data,self.eval_data.memberships,self.eval_data.loglikelihoods,self.M,self.D,N,min_em_iters,max_em_iters,self.cvtype,self.eval_data.likelihood)
         self.components.means = self.components.means.reshape(self.M, self.D)
         self.components.covars = self.components.covars.reshape(self.M, self.D, self.D)
 
@@ -199,7 +197,7 @@ class Ocltrain(LazySpecializedFunction):
         entry_type = CFUNCTYPE(c_int,POINTER(c_float), POINTER(c_float), POINTER(c_float),
                                c_int, c_int, c_int,
                                c_int, c_int,POINTER(c_char),
-                               POINTER(c_float))
+                               POINTER(c_float),POINTER(POINTER(c_float)),POINTER(POINTER(c_float)))
 
 
         proj = Project([kernel])
@@ -216,16 +214,18 @@ class CtrainFunction(ConcreteSpecializedFunction):
 
     def __call__(self, *args):
         input_data,component_memberships,loglikelihoods,num_components,num_dimensions,num_events,min_iters, max_iters,cvtype, ret_likelihood = args
-        print input_data
+        #print input_data
         input_data =input_data.ctypes.data_as(POINTER(c_float))
         component_memberships = component_memberships.ctypes.data_as(POINTER(c_float))
         loglikelihoods = loglikelihoods.ctypes.data_as(POINTER(c_float))
 
         #return value
         ret_likelihood = c_float()
-        self._c_function(input_data,component_memberships,loglikelihoods,num_components,num_dimensions,num_events,min_iters, max_iters,cvtype, byref(ret_likelihood))
+        ret_means = pointer(c_float())
+        ret_covar = pointer(c_float())
+        self._c_function(input_data,component_memberships,loglikelihoods,num_components,num_dimensions,num_events,min_iters, max_iters,cvtype, byref(ret_likelihood),byref(ret_means),byref(ret_covar))
 
-        return ret_likelihood.value
+        return ret_likelihood.value,as_array(ret_means,shape=(num_components* num_dimensions,)),as_array(ret_covar,shape=(num_components* num_dimensions* num_dimensions,))
 
 class Timer:
     def __enter__(self):
@@ -255,8 +255,11 @@ class GmmTest(unittest.TestCase):
     def test_pure_python(self):
         gmm = GMM(self.M, self.D, cvtype='diag')
         means, covars = gmm.train_using_python(self.X)
-        print "pure result"
+        print "training data"
+        print self.X
+        print "pure result means:"
         print means
+        print "pure result covars:"
         print covars
         Y = gmm.predict_using_python(self.X)
         self.assertTrue(len(set(Y)) > 1)
@@ -265,22 +268,31 @@ class GmmTest(unittest.TestCase):
         print "test training once"
         gmm0 = GMM(self.M, self.D, cvtype='diag')
         likelihood0 = gmm0.train(self.X)
-        #print "get likihood0"
-        means0  = gmm0.components.means.flatten()
-        covars0 = gmm0.components.covars.flatten()
 
-        #print likelihood0
-        #print means0
-        #print covars0
+        means0  = gmm0.components.means
+        covars0 = gmm0.components.covars
+        print "likelihood0"
+        print likelihood0
+        print "means0"
+        print means0
+        print "covars0"
+        print covars0
 
         gmm1 = GMM(self.M, self.D, cvtype='diag')
         likelihood1 = gmm1.train(self.X)
-        means1  = gmm1.components.means.flatten()
-        covars1 = gmm1.components.covars.flatten()
+        print "likelihood1"
+        print likelihood1
+        means1  = gmm1.components.means
+        print "means1"
+        print means1
+        covars1 = gmm1.components.covars
+        print "covars1"
+        print covars1
 
         self.assertAlmostEqual(likelihood0, likelihood1, places=3)
-        for a,b in zip(means0, means1):   self.assertAlmostEqual(a,b, places=3)
-        for a,b in zip(covars0, covars1): self.assertAlmostEqual(a,b, places=3)
+        for a,b in zip(means0.flatten(), means1.flatten()): self.assertAlmostEqual(a,b, places=3)
+        for a,b in zip(covars0.flatten(), covars1.flatten()): self.assertAlmostEqual(a,b, places=3)
+        print "fin"
 
 
 

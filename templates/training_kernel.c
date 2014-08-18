@@ -225,8 +225,6 @@ void seed_components(float *data_by_event,components_t* components,int num_dimen
     }
 
     free(means);
-
-    printf("safely quit seed_components");
 }
 
 void compute_average_variance (float* data_by_event,components_t* components,int num_dimensions,int num_components,int num_events) {
@@ -383,7 +381,7 @@ void mstep_covar(float* data,components_t* components,float* component_membershi
     }
 }
 
-void em_train(float *input_data, float *component_memberships, float *loglikelihoods,int num_components, int num_dimensions,int num_events,int min_iters,int max_iters, char* cvtype, float *ret_likelihood) {
+void em_train(float *input_data, float *component_memberships, float *loglikelihoods,int num_components, int num_dimensions,int num_events,int min_iters,int max_iters, char* cvtype, float *ret_likelihood, float **ret_mean, float **ret_covars) {
     float* N =  (float*)malloc(sizeof(float) * num_components);  // expected # of pixels in component: [M]
     float* pi = (float*)malloc(sizeof(float) * num_components);       // probability of component in GMM: [M]
     float* CP = (float*)malloc(sizeof(float) * num_components); //cluster probability [M]
@@ -405,7 +403,7 @@ void em_train(float *input_data, float *component_memberships, float *loglikelih
     components.means = means;
     components.R = R;
     components.Rinv = Rinv;
-    
+
     data_by_dimension  = (float*)malloc(sizeof(float) * num_events * num_dimensions);
     
     for(int e = 0; e < num_events; e++) {
@@ -438,37 +436,39 @@ void em_train(float *input_data, float *component_memberships, float *loglikelih
     // These steps keep repeating until the change in likelihood is less than some epsilon        
     // while(iters < min_iters || (fabs(change) > epsilon && iters < max_iters)) {
     while(iters < min_iters || (iters < max_iters && change > epsilon)) {
-        printf("loop");
-        printf("%d\n",iters);
+        //printf("loop");
+        //printf("%d\n",iters);
         //printf("Training iteration: %u\n", iters);
         old_likelihood = likelihood;
 
         estep1(data_by_dimension,&components, component_memberships,num_dimensions,num_components,num_events,loglikelihoods,cvtype);
-        printf("estep1\n");
+        //printf("estep1\n");
         estep2(data_by_dimension,&components,component_memberships,num_dimensions,num_components,num_events, &likelihood);
-        printf("estep2\n");
+        //printf("estep2\n");
         //printf("Likelihood: %g\n", likelihood);
         
         // This kernel computes a new N, pi isn't updated until compute_constants though
         mstep_n(data_by_dimension,&components,component_memberships,num_dimensions,num_components,num_events);
-        printf("mstep_n\n");
+        //printf("mstep_n\n");
         mstep_mean(data_by_dimension,&components,component_memberships, num_dimensions, num_components,num_events);
-        printf("mstep_mean\n");
+        //printf("mstep_mean\n");
         mstep_covar(data_by_dimension,&components,component_memberships,num_dimensions,num_components,num_events,cvtype);
-        printf("mstep_covar\n");
+        //printf("mstep_covar\n");
         
         // Inverts the R matrices, computes the constant, normalizes cluster probabilities
         constants(&components,num_components,num_dimensions);
-        printf("constants");
+        //printf("constants");
         change = likelihood - old_likelihood;
-        printf("%f\n",change);
+        //printf("%f\n",change);
         iters++;
     }
 
-    printf("%f\n", likelihood);
+    //printf("%f\n", likelihood);
     estep1(data_by_dimension,&components,component_memberships,num_dimensions,num_components,num_events,loglikelihoods,cvtype);
     estep2(data_by_dimension,&components,component_memberships,num_dimensions,num_components,num_events,&likelihood);
       
     *ret_likelihood = likelihood;
-    free(data_by_dimension);
+    *ret_mean = components.means;
+    *ret_covars = components.R;
+    
 }
