@@ -9,6 +9,7 @@ from ctree.c.nodes import *
 from ctree.jit import LazySpecializedFunction
 from ctree.transformations import *
 from ctree.jit import ConcreteSpecializedFunction
+import unittest
 
 
 class GMMComponents(object):
@@ -145,7 +146,8 @@ class GMM(object):
         N = input_data.shape[0]
         if input_data.shape[1] != self.D:
             print "Error: Data has %d features, model expects %d features." % (input_data.shape[1], self.D)
-        result = self.Ocltrain(input_data,self.eval_data.memberships,self.eval_data.loglikelihoods)
+
+        self.eval_data.likelihood  = self.Ocltrain(input_data,self.eval_data.memberships,self.eval_data.loglikelihoods,self.M,self.D,N,min_em_iters,max_em_iters,self.cvtype,self.eval_data.likelihood)
 
         self.eval_data.likelihood
         self.components.means = self.components.means.reshape(self.M, self.D)
@@ -189,18 +191,21 @@ class Ocltrain(LazySpecializedFunction):
         kernelInserts = {
             "kernelFunc": SymbolRef(kernelFunc),
         }
-        kernel = CFile("train", [
+        kernel = CFile("em_train", [
             FileTemplate(kernelPath, kernelInserts)
         ])
 
-        entry_type = CFUNCTYPE(POINTER(c_float), POINTER(c_float), POINTER(c_float),
+        entry_type = CFUNCTYPE(c_int,POINTER(c_float), POINTER(c_float), POINTER(c_float),
                                c_int, c_int, c_int,
-                               c_int, c_int,
+                               c_int, c_int,POINTER(c_char),
                                POINTER(c_float))
 
+
         proj = Project([kernel])
+
         fn = CtrainFunction()
-        return fn.finalize('train', proj,entry_type)
+
+        return fn.finalize('em_train', proj,entry_type)
 
 class CtrainFunction(ConcreteSpecializedFunction):
     def finalize(self, entry_point_name, project_node, entry_typesig):
@@ -208,8 +213,17 @@ class CtrainFunction(ConcreteSpecializedFunction):
 
         return self
 
-    def __call__(self, A):
-        return self._c_function(A)
+    def __call__(self, *args):
+        input_data,component_memberships,loglikelihoods,num_components,num_dimensions,num_events,min_iters, max_iters,cvtype, ret_likelihood = args
+        input_data =input_data.ctypes.data_as(POINTER(c_float))
+        component_memberships = component_memberships.ctypes.data_as(POINTER(c_float))
+        loglikelihoods = loglikelihoods.ctypes.data_as(POINTER(c_float))
+
+        #return value
+        ret_likelihood = c_float()
+        self._c_function(input_data,component_memberships,loglikelihoods,num_components,num_dimensions,num_events,min_iters, max_iters,cvtype, byref(ret_likelihood))
+
+        return ret_likelihood.value
 
 class Timer:
     def __enter__(self):
@@ -219,6 +233,46 @@ class Timer:
     def __exit__(self, *args):
         self.end = time.time()
         self.interval = self.end - self.start
+
+
+class GmmTest(unittest.TestCase):
+    def setUp(self):
+        self.D = 2
+        self.N = 600
+        self.M = 3
+        np.random.seed(0)
+        C = np.array([[0., -0.7], [3.5, .7]])
+        C1 = np.array([[-0.4, 1.7], [0.3, .7]])
+        Y = np.r_[
+            np.dot(np.random.randn(self.N/3, 2), C1),
+            np.dot(np.random.randn(self.N/3, 2), C),
+            np.random.randn(self.N/3, 2) + np.array([3, 3]),
+            ]
+        self.X = Y.astype(np.float32)
+
+    def test_pure_python(self):
+        gmm = GMM(self.M, self.D, cvtype='diag')
+        means, covars = gmm.train_using_python(self.X)
+        Y = gmm.predict_using_python(self.X)
+        self.assertTrue(len(set(Y)) > 1)
+
+    def test_training_once(self):
+        print "test training once"
+        gmm0 = GMM(self.M, self.D, cvtype='diag')
+        likelihood0 = gmm0.train(self.X)
+        means0  = gmm0.components.means.flatten()
+        covars0 = gmm0.components.covars.flatten()
+
+        gmm1 = GMM(self.M, self.D, cvtype='diag')
+        likelihood1 = gmm1.train(self.X)
+        means1  = gmm1.components.means.flatten()
+        covars1 = gmm1.components.covars.flatten()
+
+        self.assertAlmostEqual(likelihood0, likelihood1, places=3)
+        for a,b in zip(means0, means1):   self.assertAlmostEqual(a,b, places=3)
+        for a,b in zip(covars0, covars1): self.assertAlmostEqual(a,b, places=3)
+
+
 
 
 
@@ -236,7 +290,7 @@ def main():
     gmm = GMM(M, D, cvtype='diag')
     means, covars = gmm.train_using_python(X)
     Y = gmm.predict_using_python(X)
-    assertTrue(len(set(Y)) > 1)
+    np.testing.assertTrue(len(set(Y)) > 1)
 
 
 
@@ -260,5 +314,5 @@ def main():
 
 if __name__ == '__main__':
 
-    main()
+    unittest.main()
 
